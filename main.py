@@ -1,11 +1,10 @@
 """
-Ultra-Optimized Streaming LLM API
-Meets:
-- First token latency < 2218ms
-- Throughput > 26 tokens/sec
-- SSE compliant
+Final Optimized Streaming LLM API
+- Fast first token
+- High throughput
+- Valid JSON streaming
 - Proper error handling
-- Railway deployment ready
+- Railway compatible
 """
 
 import os
@@ -19,8 +18,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="Streaming LLM API - Final Optimized")
+app = FastAPI(title="Streaming LLM API - Final")
 
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,14 +42,12 @@ elif OPENAI_API_KEY:
 else:
     API_KEY = None
 
-
-# ✅ Global AsyncClient (critical for low latency)
+# ✅ Global HTTP client (critical for speed)
 client = httpx.AsyncClient(
     timeout=httpx.Timeout(60.0, connect=5.0),
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
     http2=False,
 )
-
 
 class PromptRequest(BaseModel):
     prompt: str
@@ -57,10 +55,10 @@ class PromptRequest(BaseModel):
 
 
 async def stream_openai_response(prompt: str):
-    """Stream OpenAI response efficiently with minimal overhead."""
+    """Efficient SSE streaming from OpenAI-compatible API."""
 
     if not API_KEY:
-        yield 'data: {"error":"API key not configured"}\n\n'
+        yield f"data: {json.dumps({'error': 'API key not configured'})}\n\n"
         yield "data: [DONE]\n\n"
         return
 
@@ -70,15 +68,14 @@ async def stream_openai_response(prompt: str):
     }
 
     payload = {
-        # ✅ Pinned fast model
-        "model": "gpt-4o-mini-2024-07-18",
+        "model": "gpt-4o-mini-2024-07-18",  # fast pinned model
         "messages": [
             {"role": "system", "content": "You are a fast coding assistant."},
             {"role": "user", "content": prompt},
         ],
         "stream": True,
-        "max_tokens": 800,          # optimized for speed
-        "temperature": 0.2,         # lower = faster sampling
+        "max_tokens": 800,      # optimized for throughput
+        "temperature": 0.2,     # faster sampling
     }
 
     try:
@@ -91,12 +88,12 @@ async def stream_openai_response(prompt: str):
 
             if response.status_code != 200:
                 error_text = await response.aread()
-                yield f'data: {{"error":"{error_text.decode()}"}}\n\n'
+                yield f"data: {json.dumps({'error': error_text.decode()})}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
-            # Immediately flush first chunk
-            yield 'data: {"status":"started"}\n\n'
+            # Immediately send first event
+            yield f"data: {json.dumps({'status': 'started'})}\n\n"
 
             async for line in response.aiter_lines():
                 if not line.startswith("data: "):
@@ -112,18 +109,17 @@ async def stream_openai_response(prompt: str):
                     parsed = json.loads(data)
                     delta = parsed["choices"][0]["delta"].get("content", "")
                     if delta:
-                        # Stream only the text delta (improves throughput)
-                        safe_delta = delta.replace('"', '\\"')
-                        yield f'data: {{"content":"{safe_delta}"}}\n\n'
+                        # Proper JSON encoding
+                        yield f"data: {json.dumps({'content': delta})}\n\n"
                 except Exception:
                     continue
 
     except httpx.TimeoutException:
-        yield 'data: {"error":"Request timed out"}\n\n'
+        yield f"data: {json.dumps({'error': 'Request timed out'})}\n\n"
         yield "data: [DONE]\n\n"
 
     except Exception as e:
-        yield f'data: {{"error":"{str(e)}"}}\n\n'
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
         yield "data: [DONE]\n\n"
 
 
